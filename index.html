@@ -1,0 +1,70 @@
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="styles.css">
+  <title>Tienda D'Leo</title>
+</head>
+<body>
+  <header>
+    <img src="https://via.placeholder.com/100x40" alt="Logo Tienda D'Leo" style="display:block; margin:auto;">
+    <h1>Tienda D'Leo</h1>
+    <nav>
+      <ul>
+        <li><a href="#categorias">Categorías</a></li>
+        <li><a href="#catalogo">Catálogo</a></li>
+        <li><a href="#promociones">Promociones</a></li>
+        <li><a href="#contacto">Contacto</a></li>
+      </ul>
+    </nav>
+  </header>
+  
+  <main>
+    <section id="inicio">
+      <h2>¡Bienvenidos a la Tienda D'Leo!</h2>
+      <p>Descubre nuestros productos excepcionales y ofertas especiales.</p>
+    </section>
+    
+    <section id="categorias">
+      <h2>Categorías de Productos</h2>
+      <ul>
+        <li><a href="#catalogo">Todos los Productos</a></li>
+        <li><a href="#novedades">Novedades</a></li>
+      </ul>
+    </section>
+
+    <section id="catalogo">
+      <h2>Catálogo de Productos</h2>
+      <input type="text" id="search" placeholder="Buscar productos...">
+      <div id="product-list"></div>
+    </section>
+
+    <section id="promociones">
+      <h2>Noticias y Promociones</h2>
+      <p>Mantente al tanto de nuestras últimas ofertas.</p>
+    </section>
+
+    <section id="contacto">
+      <h2>Contacto</h2>
+      <form id="contact-form">
+        <label for="name">Nombre:</label>
+        <input type="text" id="name" required>
+        
+        <label for="email">Correo Electrónico:</label>
+        <input type="email" id="email" required>
+        
+        <label for="message">Mensaje:</label>
+        <textarea id="message" required></textarea>
+        
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <p>&copy; 2023 Tienda D'Leo | Todos los derechos reservados.</p>
+  </footer>
+  
+  <script type="module" src="scripts.js"></script>
+</body>
+</html>
