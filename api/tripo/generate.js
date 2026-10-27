@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
     const body = req.body || {};
     const imageBase64 = typeof body.imageBase64 === "string" ? body.imageBase64 : "";
     const mimeType = typeof body.mimeType === "string" ? body.mimeType : "";
-    if (!/^image\\/(jpeg|png|webp)$/.test(mimeType)) return res.status(400).json({ error: "Formato de imagen no válido. Usa JPEG, PNG o WebP." });
+    if (!/^image\/(jpeg|png|webp)$/.test(mimeType)) return res.status(400).json({ error: "Formato de imagen no válido. Usa JPEG, PNG o WebP." });
     if (!imageBase64 || imageBase64.length > 3.85 * 1024 * 1024) return res.status(413).json({ error: "La imagen enviada está vacía o supera el límite. Reduce su tamaño e inténtalo otra vez." });
     const bytes = Buffer.from(imageBase64, "base64");
     if (!bytes.length || bytes.length > 2.8 * 1024 * 1024) return res.status(413).json({ error: "La imagen supera el límite de carga. Usa una imagen más pequeña." });
