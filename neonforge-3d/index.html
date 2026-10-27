@@ -44,7 +44,7 @@
       <div class="divider"></div>
       <div class="section">
         <div class="panel-title">Imagen de referencia <span>Opcional</span></div>
-        <p class="tip">Previsualiza una imagen de referencia para tu proyecto. La conversión automática de imagen a 3D necesita conectar un proveedor de IA.</p>
+        <p class="tip">Elige una imagen y genera un modelo 3D con Tripo. La imagen solo se envía al proveedor cuando pulses Generar.</p>
         <button id="imageBtn" class="btn ghost wide-btn">＋ Añadir imagen</button><input id="imageInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp" />
         <img id="imagePreview" class="image-preview hidden" alt="Imagen de referencia local" />
         <button id="imageInfoBtn" class="btn wide-btn" style="margin-top:8px">Imagen → modelo 3D IA ↗</button>
@@ -91,7 +91,7 @@
   </main>
 </div>
 <div id="toastStack" class="toast-stack" aria-live="polite"></div>
-<div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal"><h2 id="modalTitle">Imagen a modelo 3D</h2><p id="modalText">La conversión real de imagen a geometría 3D necesita un proveedor de IA. Esta versión no incluye una clave de servicio ni finge generar un modelo. Puedes añadir una imagen de referencia y después importar el modelo 3D resultante en GLB, GLTF u otro formato compatible.</p><div class="modal-actions"><button id="modalClose" class="btn">Cerrar</button><button id="modalImport" class="btn primary">Importar modelo 3D</button></div></div></div>
+<div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal"><h2 id="modalTitle">Generar modelo 3D con Tripo</h2><p id="modalText">Selecciona primero una imagen de referencia. Al generar, se enviará a Tripo AI para crear la geometría y las texturas. El servicio requiere una clave de API configurada de forma segura en Vercel y créditos disponibles.</p><div class="control-row"><div class="mini-label"><span>Calidad geométrica</span></div><select id="tripoQuality" class="select"><option value="standard">Equilibrado para web</option><option value="detailed">Más detalle</option></select></div><div id="tripoProgress" class="small-note" role="status" aria-live="polite">Esperando imagen de referencia…</div><a id="tripoDownloadLink" class="btn wide-btn hidden" target="_blank" rel="noopener noreferrer" style="margin-top:8px">Descargar GLB generado</a><div class="modal-actions"><button id="modalClose" class="btn">Cerrar</button><button id="modalImport" class="btn">Importar archivo local</button><button id="modalGenerate" class="btn primary">Generar desde imagen</button></div></div></div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -114,6 +114,7 @@ const canvas = $('viewport'), wrap = $('viewportWrap');
 let renderer, scene, camera, controls, composer, bloomPass, modelRoot = null, demoRoot = null, grid = null, floor = null, particleSystem = null, mixer = null;
 let loadedFileNames = [], activeObjectURLs = [], modelStats = {meshes:0, vertices:0}, recording = false, mediaRecorder = null, recordTimer = null, rotate = true, rotationSpeed = 0.45, rotationAxis = 'y', wireframe = false, bloomOn = true, showParticles = false, gridVisible = true, lightIntensity = 1.2, rimEnabled = true, currentBg = '#0a0e18', baseColor = '#8db8ff';
 let lastTick = performance.now(), elapsed = 0, lastFrame = performance.now(), fps = 60, recordProgressTimer = null;
+let tripoImageFile = null, tripoModelUrl = null, tripoTaskId = null, tripoGenerating = false;
 const originalMaterials = new WeakMap();
 
 function toast(message, kind='info', delay=3800){const el=document.createElement('div');el.className='toast '+kind;el.textContent=message;$('toastStack').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(5px)';setTimeout(()=>el.remove(),220)},delay)}
@@ -189,6 +190,63 @@ function stopRecording(){if(recordTimer)clearTimeout(recordTimer);if(mediaRecord
 function finishRecordUI(){$('recordBtn').textContent='● Grabar';$('recordBtn').classList.remove('recording');$('recDot').classList.add('hidden');$('timelineStatus').textContent='Lista para previsualizar';$('viewportMode').textContent='VISTA '+(camera.isOrthographicCamera?'ORTOGRÁFICA':'PERSPECTIVA');clearInterval(recordProgressTimer);recordTimer=null;mediaRecorder=null;setTimeout(()=>{$('trackFill').style.width='0%'},1000)}
 function setCameraMode(mode){if(mode==='orthographic'&&!camera.isOrthographicCamera){const old=camera;const c=new THREE.OrthographicCamera(-3.3,3.3,3.3,-3.3,.01,1000);c.position.copy(old.position);c.quaternion.copy(old.quaternion);camera=c;controls.object=c;controls.update()}else if(mode==='perspective'&&!camera.isPerspectiveCamera){const old=camera;const c=new THREE.PerspectiveCamera(42,wrap.clientWidth/Math.max(wrap.clientHeight,1),.01,1000);c.position.copy(old.position);c.quaternion.copy(old.quaternion);camera=c;controls.object=c;controls.update()}resizeRenderer();fitView();$('viewportMode').textContent='VISTA '+(mode==='orthographic'?'ORTOGRÁFICA':'PERSPECTIVA')}
 function makeParticles(){if(particleSystem){scene.remove(particleSystem);particleSystem.geometry.dispose();particleSystem.material.dispose();particleSystem=null}if(!showParticles)return;const count=550,positions=new Float32Array(count*3);for(let i=0;i<count;i++){const r=2.2+Math.random()*3.7,a=Math.random()*Math.PI*2,y=(Math.random()-.5)*4;positions[i*3]=Math.cos(a)*r;positions[i*3+1]=y;positions[i*3+2]=Math.sin(a)*r}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(positions,3));particleSystem=new THREE.Points(g,new THREE.PointsMaterial({color:$('particleColor').value,size:.018,transparent:true,opacity:.72,depthWrite:false}));scene.add(particleSystem)}
+
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+async function compressTripoImage(file){
+  if(!/^image\\/(png|jpeg|webp)$/.test(file.type))throw new Error('Usa una imagen PNG, JPEG o WebP.');
+  let bitmap;
+  try{bitmap=await createImageBitmap(file)}catch{throw new Error('El navegador no pudo leer la imagen. Guarda una copia como JPG o PNG e inténtalo de nuevo.')}
+  const maxEdge=1280,scale=Math.min(1,maxEdge/Math.max(bitmap.width,bitmap.height));
+  const cv=document.createElement('canvas');cv.width=Math.max(1,Math.round(bitmap.width*scale));cv.height=Math.max(1,Math.round(bitmap.height*scale));
+  const ctx=cv.getContext('2d');ctx.fillStyle='#ffffff';ctx.fillRect(0,0,cv.width,cv.height);ctx.drawImage(bitmap,0,0,cv.width,cv.height);bitmap.close?.();
+  const blob=await new Promise((resolve,reject)=>cv.toBlob(b=>b?resolve(b):reject(new Error('No se pudo comprimir la imagen.')),'image/jpeg',.78));
+  if(blob.size>2.8*1024*1024)throw new Error('La imagen sigue siendo demasiado pesada. Recórtala o usa una resolución menor.');
+  const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('No se pudo leer la imagen comprimida.'));reader.readAsDataURL(blob)});
+  return {imageBase64:base64,mimeType:'image/jpeg',size:blob.size};
+}
+async function generateTripoModel(){
+  if(tripoGenerating)return;
+  if(!tripoImageFile){$('tripoProgress').textContent='Primero pulsa “Añadir imagen” y selecciona una imagen.';toast('Selecciona una imagen de referencia antes de generar.','error');return}
+  tripoGenerating=true;$('modalGenerate').disabled=true;$('modalGenerate').textContent='Preparando…';$('tripoDownloadLink').classList.add('hidden');$('tripoProgress').textContent='Comprimiendo la imagen para una carga segura…';
+  try{
+    const image=await compressTripoImage(tripoImageFile);
+    $('tripoProgress').textContent='Enviando imagen a Tripo AI y creando tarea…';
+    const response=await fetch('/api/tripo/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...image,quality:$('tripoQuality').value})});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'No se pudo iniciar la generación (HTTP '+response.status+').');
+    tripoTaskId=result.task_id;if(!tripoTaskId)throw new Error('Tripo no devolvió un identificador de tarea.');
+    let complete=null;
+    for(let attempt=0;attempt<100;attempt++){
+      await sleep(2000);
+      const poll=await fetch('/api/tripo/task?taskId='+encodeURIComponent(tripoTaskId),{cache:'no-store'});
+      const state=await poll.json().catch(()=>({}));
+      if(!poll.ok)throw new Error(state.error||'No se pudo consultar el progreso de Tripo.');
+      const pct=Math.max(0,Math.min(100,Number(state.progress)||0));
+      $('tripoProgress').textContent='Generando modelo 3D… '+pct+'% · tarea '+tripoTaskId;
+      if(state.status==='success'){complete=state;break}
+      if(['failed','cancelled','banned','error'].includes(String(state.status).toLowerCase()))throw new Error(state.message||('Tripo terminó la tarea con estado: '+state.status));
+    }
+    if(!complete)throw new Error('La generación está tardando más de lo esperado. Puedes intentarlo otra vez; revisa tus créditos de Tripo.');
+    tripoModelUrl=complete.output?.model_url||complete.output?.pbr_model||complete.output?.base_model;
+    if(!tripoModelUrl)throw new Error('La tarea terminó, pero Tripo no devolvió un enlace de modelo.');
+    $('tripoDownloadLink').href=tripoModelUrl;$('tripoDownloadLink').classList.remove('hidden');$('tripoDownloadLink').download='neonforge-tripo-model.glb';
+    $('tripoProgress').textContent='Modelo generado. Intentando cargarlo directamente en el visor…';
+    try{
+      const gltf=await new GLTFLoader().loadAsync(tripoModelUrl);
+      if(modelRoot)clearCurrentModel();
+      loadedFileNames=['tripo-generado.glb'];
+      if(gltf.animations?.length){mixer=new THREE.AnimationMixer(gltf.scene);gltf.animations.forEach(clip=>mixer.clipAction(clip).play())}
+      prepareLoadedObject(gltf.scene);$('modalBackdrop').classList.remove('open');toast('Modelo generado y cargado en NEONFORGE 3D.','success',5500);
+    }catch(loadError){
+      console.warn('Carga directa del GLB falló; se ofrece descarga alternativa.',loadError);
+      $('tripoProgress').textContent='El modelo se generó, pero el navegador no pudo cargar el enlace directamente. Descarga el GLB con el botón inferior y luego impórtalo.';
+      toast('El modelo se generó, pero no pudo cargarse automáticamente. Descarga el GLB y usa Importar 3D.','error',6500);
+    }
+  }catch(error){
+    console.error(error);$('tripoProgress').textContent=error?.message||'Error desconocido durante la generación.';toast(error?.message||'Falló la generación con Tripo.','error',7000);
+  }finally{tripoGenerating=false;$('modalGenerate').disabled=false;$('modalGenerate').textContent='Generar desde imagen'}
+}
+
 function activateTab(name){document.querySelectorAll('.tab').forEach(t=>{const active=t.dataset.tab===name;t.classList.toggle('active',active);t.setAttribute('aria-selected',String(active))});document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));$('selectedLabel').textContent=({scene:'Escena',material:'Material',effects:'Efectos FX',motion:'Motion'})[name]||'Escena'}
 
 $('topImport').addEventListener('click',()=>$('fileInput').click());$('browseBtn').addEventListener('click',e=>{e.stopPropagation();$('fileInput').click()});$('dropZone').addEventListener('click',e=>{if(e.target.closest('button'))return;$('fileInput').click()});$('dropZone').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('fileInput').click()}});$('fileInput').addEventListener('change',e=>{loadModel(e.target.files);e.target.value=''});
@@ -198,7 +256,12 @@ $('playToggle').addEventListener('click',()=>{rotate=!rotate;$('autoRotate').che
 $('lightIntensity').addEventListener('input',e=>{lightIntensity=Number(e.target.value);$('lightValue').textContent=lightIntensity.toFixed(1);scene.userData.keyLight.intensity=lightIntensity*2.1});$('exposure').addEventListener('input',e=>{renderer.toneMappingExposure=Number(e.target.value);$('exposureValue').textContent=Number(e.target.value).toFixed(1)});document.querySelectorAll('.swatch').forEach(b=>b.addEventListener('click',()=>{currentBg=b.dataset.color;scene.background=new THREE.Color(currentBg);document.querySelectorAll('.swatch').forEach(s=>s.setAttribute('aria-pressed',String(s===b)))}));$('cameraMode').addEventListener('change',e=>setCameraMode(e.target.value));
 $('materialColor').addEventListener('input',e=>{$('colorHex').textContent=e.target.value.toUpperCase();baseColor=e.target.value;applyMaterials()});$('metalness').addEventListener('input',e=>{$('metalValue').textContent=Number(e.target.value).toFixed(2);applyMaterials()});$('roughness').addEventListener('input',e=>{$('roughValue').textContent=Number(e.target.value).toFixed(2);applyMaterials()});$('resetMaterial').addEventListener('click',resetMaterials);$('wireToggle').addEventListener('change',e=>{wireframe=e.target.checked;applyMaterials()});
 $('bloomToggle').addEventListener('change',e=>{bloomOn=e.target.checked;bloomPass.enabled=bloomOn});$('bloomIntensity').addEventListener('input',e=>{bloomPass.strength=Number(e.target.value);$('bloomValue').textContent=Number(e.target.value).toFixed(2)});$('particleToggle').addEventListener('change',e=>{showParticles=e.target.checked;makeParticles()});$('particleColor').addEventListener('change',()=>makeParticles());$('rimToggle').addEventListener('change',e=>{rimEnabled=e.target.checked;scene.userData.rimLight.visible=rimEnabled});$('resetEffects').addEventListener('click',()=>{$('bloomToggle').checked=true;bloomOn=true;bloomPass.enabled=true;$('bloomIntensity').value=.75;bloomPass.strength=.75;$('bloomValue').textContent='0.75';$('particleToggle').checked=false;showParticles=false;makeParticles();$('rimToggle').checked=true;rimEnabled=true;scene.userData.rimLight.visible=true});
-document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>activateTab(t.dataset.tab)));$('imageBtn').addEventListener('click',()=>$('imageInput').click());$('imageInput').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file);const img=$('imagePreview');if(img.dataset.url)URL.revokeObjectURL(img.dataset.url);img.dataset.url=url;img.src=url;img.classList.remove('hidden');toast('Imagen añadida como referencia local. No se ha generado geometría 3D.','info');e.target.value=''});$('imageInfoBtn').addEventListener('click',()=>$('modalBackdrop').classList.add('open'));$('modalClose').addEventListener('click',()=>$('modalBackdrop').classList.remove('open'));$('modalBackdrop').addEventListener('click',e=>{if(e.target===$('modalBackdrop'))$('modalBackdrop').classList.remove('open')});$('modalImport').addEventListener('click',()=>{$('modalBackdrop').classList.remove('open');$('fileInput').click()});
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>activateTab(t.dataset.tab)));$('imageBtn').addEventListener('click',()=>$('imageInput').click());$('imageInput').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;tripoImageFile=file;const url=URL.createObjectURL(file);const img=$('imagePreview');if(img.dataset.url)URL.revokeObjectURL(img.dataset.url);img.dataset.url=url;img.src=url;img.classList.remove('hidden');$('tripoProgress').textContent='Imagen lista: '+file.name+' ('+(file.size/1024/1024).toFixed(2)+' MB). Al generar, se enviará a Tripo AI.';toast('Imagen de referencia preparada. La generación la enviará a Tripo AI.','info');e.target.value=''});
+$('imageInfoBtn').addEventListener('click',()=>{$('modalBackdrop').classList.add('open');$('tripoProgress').textContent=tripoImageFile?'Imagen lista: '+tripoImageFile.name:'Selecciona primero una imagen con “Añadir imagen”.';$('tripoDownloadLink').classList.toggle('hidden',!tripoModelUrl);});
+$('modalClose').addEventListener('click',()=>$('modalBackdrop').classList.remove('open'));
+$('modalBackdrop').addEventListener('click',e=>{if(e.target===$('modalBackdrop')&&!tripoGenerating)$('modalBackdrop').classList.remove('open')});
+$('modalImport').addEventListener('click',()=>{$('modalBackdrop').classList.remove('open');$('fileInput').click()});
+$('modalGenerate').addEventListener('click',generateTripoModel);
 window.addEventListener('beforeunload',()=>{if(recording)stopRecording();clearURLs();const u=$('imagePreview').dataset.url;if(u)URL.revokeObjectURL(u)});
 try{initThree();$('bloomValue').textContent='0.75';updateAspectUI();setTimeout(()=>toast('Estudio listo. Importa un modelo para comenzar.','success',4500),500);const preferred=supportedMime();if(!preferred){$('timelineStatus').textContent='Grabación no disponible en este navegador';$('recordBtn').title='Prueba un navegador moderno con MediaRecorder'}else $('recordBtn').title='Exportar como '+preferred.split(';')[0]}catch(error){console.error(error);setStatus('Error al iniciar');toast('No se pudo iniciar el motor 3D. Prueba un navegador actualizado con WebGL habilitado.','error',8000)}
 </script>
